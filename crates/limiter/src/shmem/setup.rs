@@ -4,7 +4,6 @@ use std::ptr;
 use std::path::Path;
 
 use libc::{open, close, ftruncate, mmap, O_RDWR, O_CREAT, PROT_READ, PROT_WRITE, MAP_SHARED, MAP_FAILED, off_t, mode_t};
-use libc::{mkdir, O_RDONLY};
 
 use crate::shmem::GlobalRegistry;
 
@@ -13,10 +12,7 @@ use crate::shmem::GlobalRegistry;
 pub fn create_shmem<T>(path: &str) -> &'static T {
     // Ensure parent directory exists
     if let Some(parent) = Path::new(path).parent() {
-        if !parent.exists() {
-            let c_parent = CString::new(parent.to_str().unwrap()).unwrap();
-            unsafe { mkdir(c_parent.as_ptr(), 0o777 as mode_t) };
-        }
+        std::fs::create_dir_all(parent).ok();
     }
 
     unsafe {

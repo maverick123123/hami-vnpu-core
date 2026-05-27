@@ -35,6 +35,7 @@ struct SchedulerClientInner {
     shmem: &'static LocalContainerShmem,
     my_slot_idx: usize,
     my_proc_idx: usize,
+    device_id: usize,
     lock: Mutex<InnerLock>,
     hbm_handle_map: Mutex<HashMap<u64, u64>>,
 }
@@ -74,6 +75,7 @@ impl SchedulerClient {
                 shmem,
                 my_slot_idx,
                 my_proc_idx,
+                device_id,
                 lock: Mutex::new(inner_lock),
                 hbm_handle_map: Mutex::new(HashMap::new()),
             }),
@@ -393,9 +395,7 @@ impl SchedulerClient {
     /// Iterate all process slots, sum hbm_used from alive processes,
     /// clean up dead process slots. Returns corrected total usage.
     fn current_device(&self) -> usize {
-        let mut dev: i32 = 0;
-        unsafe { rtGetDevice(&mut dev); }
-        dev.max(0) as usize
+        self.inner.device_id
     }
 
     pub fn recalculate_usage(&self) -> u64 {
@@ -411,11 +411,12 @@ impl SchedulerClient {
             let pid = slot.pid.load(Ordering::Acquire);
             if pid == 0 { continue; }
             if !proc_alive(pid) {
-                // Dead process — clear its slot
-                let leaked = slot.hbm_used[device].swap(0, Ordering::Release);
-                slot.pid.store(0, Ordering::Release);
-                slot.is_active.store(0, Ordering::Release);
-                cleaned += leaked;
+                // CAS the PID to 0 — only the winner cleans up
+                if slot.pid.compare_exchange(pid, 0, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+                    let leaked = slot.hbm_used[device].swap(0, Ordering::Release);
+                    slot.is_active.store(0, Ordering::Release);
+                    cleaned += leaked;
+                }
                 continue;
             }
             total += slot.hbm_used[device].load(Ordering::Acquire);
@@ -512,7 +513,7 @@ fn proc_alive(pid: i32) -> bool {
         Ok(stat) => {
             // Extract the process state character (3rd field, after pid and comm)
             // Format: pid (comm) state ...
-            if let Some(pos) = stat.find(')') {
+            if let Some(pos) = stat.rfind(')') {
                 let rest = &stat[pos + 2..]; // skip ") "
                 if let Some(ch) = rest.chars().next() {
                     return ch != 'Z' && ch != 'X' && ch != 'x';

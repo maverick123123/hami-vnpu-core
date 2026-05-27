@@ -15,7 +15,10 @@ pub fn npu_limiter() -> SchedulerClient {
         }
     }
     let client = std::panic::catch_unwind(std::panic::AssertUnwindSafe(SchedulerClient::new))
-        .unwrap_or_else(|_| SchedulerClient::stub());
+        .unwrap_or_else(|e| {
+            log::warn!("SchedulerClient init failed (PID {}), using stub: {:?}", pid, e);
+            SchedulerClient::stub()
+        });
     *guard = Some((pid, client.clone()));
     client
 }
