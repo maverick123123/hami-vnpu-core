@@ -264,6 +264,7 @@ impl ContainerManager {
     }
 
     fn wait_for_global_turn(&self) {
+        let mut last_local_hb = get_time_us();
         loop {
             let owner_idx = self.global.lock_owner.load(Ordering::Acquire);
             if owner_idx == self.my_global_idx as u32 { return; }
@@ -288,8 +289,14 @@ impl ContainerManager {
                 }
                 if self.global.lock_owner.compare_exchange(owner_idx, self.my_global_idx as u32, Ordering::SeqCst, Ordering::Relaxed).is_ok() {
                     self.update_heartbeat();
-                    return; 
+                    return;
                 }
+            }
+
+            if now - last_local_hb > 500_000 {
+                self.global.slots[self.my_global_idx].last_heartbeat.store(now, Ordering::Relaxed);
+                self.local.manager_heartbeat.store(now, Ordering::Relaxed);
+                last_local_hb = now;
             }
 
             let current_sig = self.global.signal_counter.load(Ordering::Relaxed);
